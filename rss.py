@@ -18,8 +18,13 @@ def send_telegram_message(TELEGRAM_API_TOKEN, TELEGRAM_USER_ID, message):
         "chat_id": TELEGRAM_USER_ID,
         "text": message
     }
+    
+    headers = {
+        'Content-Type': 'application/json; charset=UTF-8'  # 显式指定UTF-8编码
+    }
+    
     try:
-        response = requests.get(url, params=params)
+        response = requests.get(url, params=params, headers=headers)
         if response.status_code == 200:
             print(f"消息已发送到 Telegram: {message}")
         else:
@@ -32,9 +37,7 @@ def fetch_rss(RSS_URL):
     try:
         response = requests.get(RSS_URL)
         response.raise_for_status()
-        # 显式获取编码并解码内容
-        encoding = response.encoding if response.encoding else 'utf-8'
-        return response.content.decode(encoding)
+        return response.text
     except Exception as e:
         print(f"获取RSS失败: {e}")
         return None
@@ -59,9 +62,8 @@ def parse_rss(xml_data, KEYWORDS):
         
         time_diff = gmt_time - pub_date
         
-        if time_diff <= timedelta(minutes=100):
-            # 确保关键词匹配正常
-            matched_keywords = [keyword for keyword in KEYWORDS if keyword in title]
+        if time_diff <= timedelta(minutes=1):
+            matched_keywords = [keyword for keyword in KEYWORDS if keyword.lower() in title.lower()]
             if matched_keywords:
                 posts.append({"title": title, "link": link, "guid": guid, "pubDate": pub_date, "keywords": matched_keywords})
     
@@ -75,6 +77,11 @@ def main():
     RSS_URL = "https://rss.nodeseek.com/"
 
     for user_id, user_data in config["USERS"].items():
+        # 检查是否存在 "keywords" 和 "keyword_switch"
+        if "keywords" not in user_data or "keyword_switch" not in user_data:
+            print(f"用户 {user_id} 缺少 'keywords' 或 'keyword_switch'，跳过处理")
+            continue
+
         KEYWORDS = user_data["keywords"]
         keyword_switch = user_data["keyword_switch"]
 
@@ -91,7 +98,7 @@ def main():
                     for post in posts:
                         print(f"- {post['title']}: {post['link']}")
                         for keyword in post['keywords']:
-                            message = f"找到新的匹配的帖子：\n{post['title']} (关键字: {keyword})\n{post['link']}"
+                            message = f"{post['title']}\n{post['link']}"
                             send_telegram_message(TELEGRAM_API_TOKEN, user_id, message)
                 else:
                     print(f"用户 {user_id} 未找到新的匹配的帖子")
@@ -103,5 +110,4 @@ def main():
 if __name__ == "__main__":
     while True:
         main()
-        time.sleep(20)  # 每1分钟执行一次
-
+        time.sleep(60)  # 每1分钟执行一次
