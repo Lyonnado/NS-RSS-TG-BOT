@@ -71,8 +71,11 @@ def process_users(config, posts):
         if not keywords or keyword_switch == "off":
             continue
 
-        # 筛选出符合关键词的帖子
-        user_posts = [post for post in posts if any(keyword in post["title"] for keyword in keywords)]
+        # 筛选出符合关键词的帖子（忽略大小写）
+        user_posts = [
+            post for post in posts
+            if any(keyword.lower() in post["title"].lower() for keyword in keywords)
+        ]
 
         # 给每个符合条件的用户发送消息
         for post in user_posts:
