@@ -4,6 +4,7 @@ import requests
 import pytz
 from datetime import datetime, timedelta
 import feedparser
+from email.utils import parsedate_to_datetime
 
 # 读取配置文件并返回配置字典
 def read_config():
@@ -26,10 +27,9 @@ def get_last_fetched_time(config):
         return (datetime.now(pytz.utc) - timedelta(minutes=10)).isoformat()
     return last_fetched_time
 
-# 更新配置中的最后抓取时间为当前时间
-def update_last_fetched_time(config):
-    last_fetched_time = datetime.now(pytz.utc).isoformat()
-    write_last_fetched_time(config, last_fetched_time)
+# 更新配置中的最后抓取时间为最新帖子的时间
+def update_last_fetched_time(config, latest_post_time):
+    write_last_fetched_time(config, latest_post_time)
 
 # 获取RSS源的数据
 def fetch_rss_feed():
@@ -41,12 +41,25 @@ def filter_new_posts(feed, last_fetched_time):
     last_time = datetime.fromisoformat(last_fetched_time)
     new_posts = []
     for entry in feed.entries:
-        # 将RSS文章的发布时间转换为datetime对象
-        post_time = datetime.strptime(entry.published, "%a, %d %b %Y %H:%M:%S %Z").replace(tzinfo=pytz.utc)
+        try:
+            # 使用更健壮的日期解析方法
+            post_time = parsedate_to_datetime(entry.published)
+            
+            # 确保时区信息正确（转换为UTC）
+            if post_time.tzinfo is None:
+                post_time = post_time.replace(tzinfo=pytz.utc)
+            else:
+                post_time = post_time.astimezone(pytz.utc)
+                
+        except Exception as e:
+            print(f"解析日期失败: {entry.published}, 错误: {e}")
+            continue
+        
         if post_time > last_time:
             new_posts.append({
                 "title": entry.title,
-                "link": entry.link
+                "link": entry.link,
+                "published": post_time.isoformat()  # 保存发布时间用于更新记录
             })
     return new_posts
 
@@ -95,15 +108,36 @@ def main():
         # 获取RSS源的内容
         rss_feed = fetch_rss_feed()
 
-        # 更新配置中的最后抓取时间为当前时间
-        update_last_fetched_time(config)
-        
         # 筛选出新发布的帖子
         new_posts = filter_new_posts(rss_feed, last_fetched_time)
 
         # 如果有新帖子，处理用户的相关操作
         if new_posts:
             process_users(config, new_posts)
+            # 找到最新帖子的发布时间
+            latest_post_time = max(
+                [datetime.fromisoformat(post["published"]) for post in new_posts],
+                default=datetime.fromisoformat(last_fetched_time)
+            ).isoformat()
+            # 更新配置中的最后抓取时间为最新帖子的时间
+            update_last_fetched_time(config, latest_post_time)
+        else:
+            # 没有新帖子时，尝试获取当前RSS源中最新帖子的时间
+            if rss_feed.entries:
+                try:
+                    latest_entry = rss_feed.entries[0]
+                    post_time = parsedate_to_datetime(latest_entry.published)
+                    if post_time.tzinfo is None:
+                        post_time = post_time.replace(tzinfo=pytz.utc)
+                    else:
+                        post_time = post_time.astimezone(pytz.utc)
+                    update_last_fetched_time(config, post_time.isoformat())
+                except Exception as e:
+                    print(f"更新最新帖子时间失败: {e}")
+            else:
+                # 如果没有帖子，使用当前时间作为回退
+                current_time = datetime.now(pytz.utc).isoformat()
+                update_last_fetched_time(config, current_time)
 
         # 每隔60秒循环一次
         time.sleep(60)
@@ -111,4 +145,3 @@ def main():
 # 脚本入口，启动主函数
 if __name__ == "__main__":
     main()
-
